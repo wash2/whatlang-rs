@@ -1,10 +1,6 @@
 use std::fmt;
 
 use crate::utils::is_stop_char;
-use hashbrown::HashSet;
-use std::iter::FromIterator;
-use hashbrown::hash_map::DefaultHashBuilder;
-use std::hash::{Hash, Hasher};
 /// Represents a writing system (Latin, Cyrillic, Arabic, etc).
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 pub enum Script {
@@ -81,12 +77,6 @@ struct ScriptAndCheck {
 impl PartialEq for ScriptAndCheck {
     fn eq(&self, other: &Self) -> bool {
         self.script == other.script
-    }
-}
-
-impl Hash for ScriptAndCheck {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        self.script.hash(hasher)
     }
 }
 
@@ -192,7 +182,13 @@ pub fn divide_text_by_script(text: &str) -> Vec<(&str, Script)> {
         },
     ];
 
-    let mut active_set: HashSet<&ScriptAndCheck, DefaultHashBuilder>  = HashSet::from_iter(scripts.iter());
+    let mut active_script = scripts.iter()
+    .find(|script_and_check| {
+        match text.char_indices().next() {
+            Some((_, ch)) => (script_and_check.check_fn)(ch),
+            _ => false
+        }
+    });
     let mut divided_text = Vec::with_capacity(3);
     let mut left_pointer = 0;
 
@@ -201,32 +197,29 @@ pub fn divide_text_by_script(text: &str) -> Vec<(&str, Script)> {
             continue;
         }
 
-        let mut last_removed: HashSet<&ScriptAndCheck, DefaultHashBuilder> = HashSet::new();
-        for &script_and_check in active_set.iter() {
-            if !(script_and_check.check_fn)(ch) {
-                last_removed.insert(script_and_check.clone());
-            }
-        }
-
-        active_set = active_set.difference(&last_removed).map(|&e| e).into_iter().collect();
-        if active_set.is_empty() {
-
-            for &script_and_check in last_removed.iter() {
+        if active_script.is_some() {
+            let unwrapped_active_script = active_script.unwrap();
+            if !(unwrapped_active_script.check_fn)(ch) {
+            
                 if left_pointer < text.len() && right_pointer <= text.len() && text.is_char_boundary(right_pointer) {
-                    divided_text.push((&text[left_pointer..right_pointer], script_and_check.script));
+                    divided_text.push((&text[left_pointer..right_pointer], unwrapped_active_script.script));
                     left_pointer = right_pointer;
                 }
+                active_script = scripts.iter().find(|script_and_check| (script_and_check.check_fn)(ch));
             }
-            active_set = HashSet::from_iter(scripts.iter());
+    
+    
+        }
+        else {
+            active_script = scripts.iter().find(|script_and_check| (script_and_check.check_fn)(ch));
         }
     }
 
+
+
     // add in last block if not empty
-    if left_pointer < text.len() {
-        for &script_and_check in active_set.iter() {
-            divided_text.push((&text[left_pointer..], script_and_check.script));
-            break;
-        }
+    if left_pointer < text.len() && active_script.is_some() {
+        divided_text.push((&text[left_pointer..], active_script.unwrap().script));
     }
     divided_text
 }

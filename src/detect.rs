@@ -6,6 +6,7 @@ use crate::lang::*;
 use crate::options::{List, Options};
 use crate::script::*;
 use crate::trigrams::*;
+use std::cmp::Reverse;
 
 /// Detect a language and a script by a given text.
 ///
@@ -143,14 +144,17 @@ pub fn detect_langs_with_options(text: &str, options: &Options) -> Vec<Info> {
                     acc.insert(info.lang, info);
                 }
             }
-            // TODO add or replace if confidence is larger than existing value
-            continue;
         }
         acc
     }).values()
-    .map(|info| info.clone())
+    .filter_map(|&info| {
+        if info.confidence > options.confidence_threshold {
+            return Some(info);
+        }
+        None
+    })
     .collect::<Vec<Info>>();
-    langs.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+    langs.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
     langs
 
 }
@@ -217,11 +221,11 @@ fn detect_langs_in_profiles(
             _ => {}
         }
         let dist = calculate_distance(lang_trigrams, &trigrams);
-        lang_distances.push(((*lang), dist));
+        lang_distances.push(((*lang), MAX_TOTAL_DISTANCE - dist));
     }
 
     // Sort languages by distance
-    lang_distances.sort_by_key(|key| key.1);
+    lang_distances.sort_by_key(|key| Reverse(key.1));
 
     // Return None if lang_distances is empty
     // Return the only language with is_reliable=true if there is only 1 item
@@ -239,8 +243,8 @@ fn detect_langs_in_profiles(
     //
     let lang_dist1 = lang_distances[0];
     let lang_dist2 = lang_distances[1];
-    let score1 = MAX_TOTAL_DISTANCE - lang_dist1.1;
-    let score2 = MAX_TOTAL_DISTANCE - lang_dist2.1;
+    let score1 = lang_dist1.1;
+    let score2 = lang_dist2.1;
 
     if score1 == 0 {
         // If score1 is 0, score2 is 0 as well, because array is sorted.
@@ -269,10 +273,10 @@ fn detect_langs_in_profiles(
     let min = lang_distances.last().unwrap().1;
 
     lang_distances.iter()
-    .map(|(lang, dist)| Info {
+    .map(|&(lang, dist)| Info {
         lang: lang.clone(),
         script: script,
-        confidence: 1f64 - f64::from(dist - min) / f64::from(lang_dist1.1)
+        confidence: f64::from(dist - min) / f64::from(score1)
     })
     .into_iter()
     .collect::<Vec<Info>>()
@@ -397,7 +401,18 @@ fn detect_multiple_mandarin_japanese(script: Script, options: &Options) -> Vec<I
                 });
             }
         }
-        _ => (),
+        _ => {
+            langs.push(Info {
+                lang: Lang::Jpn,
+                script: script,
+                confidence: 1.0
+            });
+            langs.push(Info {
+                lang: Lang::Cmn,
+                script: script,
+                confidence: 1.0
+            });
+        },
     };
     langs
 }
@@ -553,5 +568,29 @@ mod tests {
         "#;
         let info = detect(text).unwrap();
         assert!(!info.is_reliable());
+    }
+
+    #[test]
+    fn test_detect_langs() {
+        assert_eq!(detect_langs("testing if this is english")[0], Info {
+            lang: Lang::Eng,
+            script: Script::Latin,
+            confidence: 1.0
+        });
+        assert!(detect_langs("你好，我叫三妹").contains(&(Info {
+            lang: Lang::Cmn,
+            script: Script::Mandarin,
+            confidence: 1.0
+        })));
+        assert!(detect_langs("testing if this is english 你好，我叫三妹").contains(&(Info {
+            lang: Lang::Eng,
+            script: Script::Latin,
+            confidence: 1.0
+        })));
+        assert!(detect_langs("testing if this is english 你好，我叫三妹").contains(&(Info {
+            lang: Lang::Cmn,
+            script: Script::Mandarin,
+            confidence: 1.0
+        })));
     }
 }
