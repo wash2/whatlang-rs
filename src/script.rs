@@ -1,9 +1,12 @@
 use std::fmt;
 
 use crate::utils::is_stop_char;
-
+use hashbrown::HashSet;
+use std::iter::FromIterator;
+use hashbrown::hash_map::DefaultHashBuilder;
+use std::hash::{Hash, Hasher};
 /// Represents a writing system (Latin, Cyrillic, Arabic, etc).
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 pub enum Script {
     // Keep this in alphabetic order (for C bindings)
     Arabic,
@@ -67,6 +70,165 @@ impl fmt::Display for Script {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.name())
     }
+}
+
+
+struct ScriptAndCheck {
+    script: Script,
+    check_fn: fn(char) -> bool
+}
+
+impl PartialEq for ScriptAndCheck {
+    fn eq(&self, other: &Self) -> bool {
+        self.script == other.script
+    }
+}
+
+impl Hash for ScriptAndCheck {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        self.script.hash(hasher)
+    }
+}
+
+impl Eq for ScriptAndCheck {}
+
+pub fn divide_text_by_script(text: &str) -> Vec<(&str, Script)> {
+    let scripts: [ScriptAndCheck; 24] = [
+        ScriptAndCheck {
+            script: Script::Latin,
+            check_fn: is_latin
+        },
+        ScriptAndCheck {
+            script: Script::Cyrillic,
+            check_fn: is_cyrillic
+        },
+        ScriptAndCheck {
+            script: Script::Arabic,
+            check_fn: is_arabic
+        },
+        ScriptAndCheck {
+            script: Script::Mandarin,
+            check_fn: is_mandarin
+        },
+        ScriptAndCheck {
+            script: Script::Devanagari,
+            check_fn: is_devanagari
+        },
+        ScriptAndCheck {
+            script: Script::Hebrew,
+            check_fn: is_hebrew
+        },
+        ScriptAndCheck {
+            script: Script::Ethiopic,
+            check_fn: is_ethiopic
+        },
+        ScriptAndCheck {
+            script: Script::Georgian,
+            check_fn: is_georgian
+        },
+        ScriptAndCheck {
+            script: Script::Bengali,
+            check_fn: is_bengali
+        },
+        ScriptAndCheck {
+            script: Script::Hangul,
+            check_fn: is_hangul
+        },
+        ScriptAndCheck {
+            script: Script::Hiragana,
+            check_fn: is_hiragana
+        },
+        ScriptAndCheck {
+            script: Script::Katakana,
+            check_fn: is_katakana
+        },
+        ScriptAndCheck {
+            script: Script::Greek,
+            check_fn: is_greek
+        },
+        ScriptAndCheck {
+            script: Script::Kannada,
+            check_fn: is_kannada
+        },
+        ScriptAndCheck {
+            script: Script::Tamil,
+            check_fn: is_tamil
+        },
+        ScriptAndCheck {
+            script: Script::Thai,
+            check_fn: is_thai
+        },
+        ScriptAndCheck {
+            script: Script::Gujarati,
+            check_fn: is_gujarati
+        },
+        ScriptAndCheck {
+            script: Script::Gurmukhi,
+            check_fn: is_gurmukhi
+        },
+        ScriptAndCheck {
+            script: Script::Telugu,
+            check_fn: is_telugu
+        },
+        ScriptAndCheck {
+            script: Script::Malayalam,
+            check_fn: is_malayalam
+        },
+        ScriptAndCheck {
+            script: Script::Oriya,
+            check_fn: is_oriya
+        },
+        ScriptAndCheck {
+            script: Script::Myanmar,
+            check_fn: is_myanmar
+        },
+        ScriptAndCheck {
+            script: Script::Sinhala,
+            check_fn: is_sinhala
+        },
+        ScriptAndCheck {
+            script: Script::Khmer,
+            check_fn: is_khmer
+        },
+    ];
+
+    let mut active_set: HashSet<&ScriptAndCheck, DefaultHashBuilder>  = HashSet::from_iter(scripts.iter());
+    let mut divided_text = Vec::with_capacity(3);
+    let mut left_pointer = 0;
+
+    for (right_pointer, ch) in text.char_indices() {
+        if is_stop_char(ch) {
+            continue;
+        }
+
+        let mut last_removed: HashSet<&ScriptAndCheck, DefaultHashBuilder> = HashSet::new();
+        for &script_and_check in active_set.iter() {
+            if !(script_and_check.check_fn)(ch) {
+                last_removed.insert(script_and_check.clone());
+            }
+        }
+
+        active_set = active_set.difference(&last_removed).map(|&e| e).into_iter().collect();
+        if active_set.is_empty() {
+
+            for &script_and_check in last_removed.iter() {
+                if left_pointer < text.len() && right_pointer <= text.len() && text.is_char_boundary(right_pointer) {
+                    divided_text.push((&text[left_pointer..right_pointer], script_and_check.script));
+                    left_pointer = right_pointer;
+                }
+            }
+            active_set = HashSet::from_iter(scripts.iter());
+        }
+    }
+
+    // add in last block if not empty
+    if left_pointer < text.len() {
+        for &script_and_check in active_set.iter() {
+            divided_text.push((&text[left_pointer..], script_and_check.script));
+            break;
+        }
+    }
+    divided_text
 }
 
 type ScriptCounter = (Script, fn(char) -> bool, usize);
@@ -243,7 +405,7 @@ fn is_mandarin(ch: char) -> bool {
         | '\u{3021}'..='\u{3029}'
         | '\u{3038}'..='\u{303B}'
         | '\u{3400}'..='\u{4DB5}'
-        | '\u{4E00}'..='\u{9FCC}'
+        | '\u{4E00}'..='\u{9FFF}'
         | '\u{F900}'..='\u{FA6D}'
         | '\u{FA70}'..='\u{FAD9}' => true,
         _ => false,
@@ -446,6 +608,11 @@ mod tests {
     }
 
     #[test]
+    fn test_is_mandarin() {
+        assert_eq!(is_mandarin('你'), true);
+    }
+
+    #[test]
     fn test_is_cyrillic() {
         assert_eq!(is_cyrillic('а'), true);
         assert_eq!(is_cyrillic('Я'), true);
@@ -546,5 +713,13 @@ mod tests {
         assert_eq!(is_oriya('ଐ'), true);
         assert_eq!(is_oriya('୷'), true);
         assert_eq!(is_oriya('౿'), false);
+    }
+
+    #[test]
+    fn test_divide_text_by_script() {
+        assert_eq!(divide_text_by_script(""), vec![]);
+        assert_eq!(divide_text_by_script("test"), vec![("test", Script::Latin)]);
+        assert_eq!(divide_text_by_script("你好"), vec![("你好", Script::Mandarin)]);
+        assert_eq!(divide_text_by_script("test 你好"), vec![("test ", Script::Latin), ("你好", Script::Mandarin)]);
     }
 }

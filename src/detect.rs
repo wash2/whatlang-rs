@@ -33,6 +33,128 @@ pub fn detect_lang(text: &str) -> Option<Lang> {
     detect(text).map(|info| info.lang)
 }
 
+pub fn detect_langs(text: &str) -> Vec<Info> {
+    detect_langs_with_options(text, &Options::default())
+}
+
+pub fn detect_langs_with_options(text: &str, options: &Options) -> Vec<Info> {
+    let divided_text = divide_text_by_script(text);
+    let mut langs = divided_text.iter()
+    .fold(
+        HashMap::new(),
+        |mut acc: HashMap<Lang, Info>, text_and_script| -> HashMap<Lang, Info> {
+            let (text_slice, script) = text_and_script;
+
+        let new_langs = match script {
+            Script::Latin => detect_langs_in_profiles(*text_slice, options, LATIN_LANGS, *script),
+            Script::Cyrillic => detect_langs_in_profiles(*text_slice, options, CYRILLIC_LANGS, *script),
+            Script::Devanagari => detect_langs_in_profiles(*text_slice, options, DEVANAGARI_LANGS, *script),
+            Script::Hebrew => detect_langs_in_profiles(*text_slice, options, HEBREW_LANGS, *script),
+            Script::Ethiopic => detect_langs_in_profiles(*text_slice, options, ETHIOPIC_LANGS, *script),
+            Script::Arabic => detect_langs_in_profiles(*text_slice, options, ARABIC_LANGS, *script),
+            Script::Mandarin => detect_multiple_mandarin_japanese(*script, options),
+            Script::Bengali => vec![Info {
+                lang: Lang::Ben,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Hangul => vec![Info {
+                lang: Lang::Kor,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Georgian => vec![Info {
+                lang: Lang::Kat,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Greek => vec![Info {
+                lang: Lang::Ell,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Kannada => vec![Info {
+                lang: Lang::Kan,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Tamil => vec![Info {
+                lang: Lang::Tam,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Thai => vec![Info {
+                lang: Lang::Tha,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Gujarati => vec![Info {
+                lang: Lang::Guj,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Gurmukhi => vec![Info {
+                lang: Lang::Pan,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Telugu => vec![Info {
+                lang: Lang::Tel,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Malayalam => vec![Info {
+                lang: Lang::Mal,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Oriya => vec![Info {
+                lang: Lang::Ori,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Myanmar => vec![Info {
+                lang: Lang::Mya,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Sinhala => vec![Info {
+                lang: Lang::Sin,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Khmer => vec![Info {
+                lang: Lang::Khm,
+                script: *script,
+                confidence: 1.0
+            }],
+            Script::Katakana | Script::Hiragana => vec![Info {
+                lang: Lang::Jpn,
+                script: *script,
+                confidence: 1.0
+            }],
+        };
+        for info in new_langs {
+            if !acc.contains_key(&info.lang) {
+                acc.insert(info.lang, info);
+            }
+            else {
+                if acc.get(&info.lang).unwrap().confidence < info.confidence {
+                    acc.insert(info.lang, info);
+                }
+            }
+            // TODO add or replace if confidence is larger than existing value
+            continue;
+        }
+        acc
+    }).values()
+    .map(|info| info.clone())
+    .collect::<Vec<Info>>();
+    langs.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+    langs
+
+}
+
 pub fn detect_lang_with_options(text: &str, options: &Options) -> Option<Lang> {
     detect_with_options(text, options).map(|info| info.lang)
 }
@@ -77,6 +199,83 @@ fn detect_lang_based_on_script(
         Script::Khmer => Some((Lang::Khm, 1.0)),
         Script::Katakana | Script::Hiragana => Some((Lang::Jpn, 1.0)),
     }
+}
+
+fn detect_langs_in_profiles(
+    text: &str,
+    options: &Options,
+    lang_profile_list: LangProfileList,
+    script: Script
+) -> Vec<Info> {
+    let mut lang_distances: Vec<(Lang, u32)> = Vec::with_capacity(lang_profile_list.len());
+    let trigrams = get_trigrams_with_positions(text);
+
+    for &(ref lang, lang_trigrams) in lang_profile_list {
+        match options.list {
+            Some(List::White(ref whitelist)) if !whitelist.contains(lang) => continue,
+            Some(List::Black(ref blacklist)) if blacklist.contains(lang) => continue,
+            _ => {}
+        }
+        let dist = calculate_distance(lang_trigrams, &trigrams);
+        lang_distances.push(((*lang), dist));
+    }
+
+    // Sort languages by distance
+    lang_distances.sort_by_key(|key| key.1);
+
+    // Return None if lang_distances is empty
+    // Return the only language with is_reliable=true if there is only 1 item
+    if lang_distances.len() < 2 {
+        return vec![Info {
+            lang: lang_distances.first().unwrap().0,
+            script: script,
+            confidence: 1.0
+        }];
+    }
+
+    // Calculate is_reliable based on:
+    // - number of unique trigrams in the text
+    // - rate (diff between score of the first and second languages)
+    //
+    let lang_dist1 = lang_distances[0];
+    let lang_dist2 = lang_distances[1];
+    let score1 = MAX_TOTAL_DISTANCE - lang_dist1.1;
+    let score2 = MAX_TOTAL_DISTANCE - lang_dist2.1;
+
+    if score1 == 0 {
+        // If score1 is 0, score2 is 0 as well, because array is sorted.
+        // Therefore there is no language to return.
+        return Vec::new();
+    } else if score2 == 0 {
+        // If score2 is 0, return first language, to prevent division by zero in the rate formula.
+        // In this case confidence is calculated by another formula.
+        // At this point there are two options:
+        // * Text contains random characters that accidentally match trigrams of one of the languages
+        // * Text really matches one of the languages.
+        //
+        // Number 500.0 is based on experiments and common sense expectations.
+        let mut confidence = f64::from(score1) / 500.0;
+        if confidence > 1.0 {
+            confidence = 1.0;
+        }
+        return vec![Info {
+            lang: lang_dist1.0,
+            script: script,
+            confidence: confidence
+        }];
+    }
+
+    // normalize distances and return
+    let min = lang_distances.last().unwrap().1;
+
+    lang_distances.iter()
+    .map(|(lang, dist)| Info {
+        lang: lang.clone(),
+        script: script,
+        confidence: 1f64 - f64::from(dist - min) / f64::from(lang_dist1.1)
+    })
+    .into_iter()
+    .collect::<Vec<Info>>()
 }
 
 fn detect_lang_in_profiles(
@@ -161,6 +360,46 @@ fn calculate_distance(lang_trigrams: LangProfile, text_trigrams: &HashMap<String
         total_dist += dist;
     }
     total_dist
+}
+
+fn detect_multiple_mandarin_japanese(script: Script, options: &Options) -> Vec<Info> {
+    let mut langs = Vec::new();
+    let _a = match options.list {
+        Some(List::White(ref whitelist)) => {
+            if whitelist.contains(&Lang::Jpn) {
+                langs.push(Info {
+                    lang: Lang::Jpn,
+                    script: script,
+                    confidence: 1.0
+                });
+            } 
+            if whitelist.contains(&Lang::Cmn) {
+                langs.push(Info {
+                    lang: Lang::Cmn,
+                    script: script,
+                    confidence: 1.0
+                });
+            }
+        }
+        Some(List::Black(ref blacklist)) => {
+            if !blacklist.contains(&Lang::Jpn) {
+                langs.push(Info {
+                    lang: Lang::Jpn,
+                    script: script,
+                    confidence: 1.0
+                });
+            } 
+            if !blacklist.contains(&Lang::Cmn) {
+                langs.push(Info {
+                    lang: Lang::Cmn,
+                    script: script,
+                    confidence: 1.0
+                });
+            }
+        }
+        _ => (),
+    };
+    langs
 }
 
 fn detect_mandarin_japanese(options: &Options) -> Option<(Lang, f64)> {

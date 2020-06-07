@@ -51,3 +51,4 @@ pub use crate::detect::detect;
 pub use crate::detect::detect_lang;
 pub use crate::detect::detect_with_options;
 pub use crate::script::detect_script;
+pub use crate::script::divide_text_by_script;

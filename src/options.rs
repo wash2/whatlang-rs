@@ -7,7 +7,7 @@ pub(crate) enum List {
 }
 
 /// Allows to customize behaviour of [Detector](struct.Detector.html).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Options {
     pub(crate) list: Option<List>,
 }
